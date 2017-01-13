@@ -1,0 +1,157 @@
+#!/usr/bin/env python
+
+import os
+import os.path
+import re
+import tarfile
+import zipfile
+
+import boto3
+import botocore
+import click
+import docker
+
+
+def handler(package, method):
+    """
+    Construct AWS Lambda handler from Python package and method
+    """
+    pkg = os.path.splitext(os.path.basename(package))[0]
+    return "{}.{}".format(pkg, method)
+
+
+def get_archive(container, function):
+    """
+    Extract Python dependencies from Docker container
+    """
+    archive = function + '.tar'
+    if os.path.exists(archive):
+        os.remove(archive)
+
+    with open(archive, "wb") as f:
+        archive, _ = container.get_archive('/venv/lib/python2.7/site-packages')
+        f.write(archive.read())
+
+
+def convert_archive_to_zip(function, package):
+    """
+    Create AWS Lambda package from tarball
+    """
+    tarf = tarfile.open(function + '.tar', 'r')
+
+    archive = function + '.zip'
+    if os.path.exists(archive):
+        os.remove(archive)
+    zipf = zipfile.ZipFile(archive, 'a', compression=zipfile.ZIP_DEFLATED)
+
+    for m in tarf.getmembers():
+        f = tarf.extractfile(m)
+        name = re.sub(r'site-packages[/]', '', m.name)
+        if not name:
+            continue
+        # Ignore base installation files
+        if re.match(r'easy_install|pkg_resources|pip|setuptools|wheel', name):
+            continue
+        # Ignore compiled Python files
+        if name.endswith('.pyc'):
+            continue
+        # Ignore if not a file
+        if not f:
+            continue
+        zipf.writestr(name, f.read())
+
+    # Add Lambda handler
+    zipf.write(package, os.path.basename(package))
+
+    zipf.close()
+    tarf.close()
+
+
+def lambda_build(role, profile, function, package, tag):
+    """
+    Build dependencies image
+    """
+    click.secho("building dependencies for AWS Lambda function ({})".format(function), fg='green')
+    client = docker.from_env()
+    client.images.build(path='.', tag=tag)
+
+
+def lambda_package(role, profile, function, package, method, tag):
+    """
+    Create AWS Lambda package
+    """
+    click.secho("packaging AWS Lambda function ({})".format(function), fg='green')
+    client = docker.from_env()
+    container = client.containers.run(tag, detach=True)
+    container.logs()
+    get_archive(container, function)
+    convert_archive_to_zip(function, package)
+
+
+def lambda_deploy(role, profile, function, package, method, timeout, memory):
+    """
+    Deploy to AWS Lambda
+    """
+    click.secho("deploying AWS Lambda function ({})".format(function), fg='green')
+    if profile:
+        session = boto3.Session(profile_name=profile)
+        client = session.client('lambda')
+    else:
+        client = boto3.client('lambda')
+
+    lambda_handler = handler(package, method)
+
+    content = None
+    with open(function + '.zip', 'rb') as f:
+        content = f.read()
+
+    try:
+        client.get_function(FunctionName=function)
+        client.update_function_configuration(
+            FunctionName=function,
+            Handler=lambda_handler)
+        client.update_function_code(
+            FunctionName=function,
+            ZipFile=content)
+    except botocore.exceptions.ClientError:
+        client.create_function(
+            FunctionName=function,
+            Runtime='python2.7',
+            Timeout=timeout,
+            MemorySize=memory,
+            Role=role,
+            Handler=lambda_handler,
+            Code={'ZipFile': content})
+
+
+def lambda_invoke(role, profile, function, payload=None):
+    click.secho("invoking AWS Lambda function ({})".format(function), fg='green')
+
+    if profile:
+        session = boto3.Session(profile_name=profile)
+        client = session.client('lambda')
+    else:
+        client = boto3.client('lambda')
+
+    response = client.invoke(FunctionName=function)
+    click.echo(response['StatusCode'])
+
+
+@click.command()
+@click.argument('function')
+@click.argument('package')
+@click.argument('method')
+@click.argument('role', envvar='AWS_ROLE_ARN', type=str)
+@click.option('--profile', default='default', help='AWS credential profile')
+@click.option('--tag', default='probcomp/iventure-aws-lambda', help='Tag for generated Docker image')
+@click.option('--timeout', default=90, help='Timeout for AWS Lambda function (seconds)')
+@click.option('--memory', default=128, help='Maximum memory size for AWS Lambda function (MB)')
+def main(role, profile, function, package, method):
+    lambda_build(role, profile, function, package, tag)
+    lambda_package(role, profile, function, package, method, tag)
+    lambda_deploy(role, profile, function, package, method, timeout, memory)
+    lambda_invoke(role, profile, function)
+
+
+if __name__ == '__main__':
+    main()
