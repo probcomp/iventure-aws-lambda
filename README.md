@@ -14,27 +14,37 @@ into a ZIP archive. We complete the process by deploying to AWS Lambda.
 ### Usage
 
 ```
-Usage: aws-lambda [OPTIONS] FUNCTION PACKAGE METHOD ROLE
+Usage: aws-lambda [OPTIONS] COMMAND [ARGS]...
 
 Options:
-  --profile TEXT     AWS credential profile
-  --tag TEXT         Tag for generated Docker image
-  --timeout INTEGER  Timeout for AWS Lambda function (seconds)
-  --memory INTEGER   Maximum memory size for AWS Lambda function (MB)
-  --help             Show this message and exit.
+  --role TEXT     Role ARN
+  --profile TEXT  AWS credential profile
+  --help          Show this message and exit.
 
-FUNCTION is the name of the AWS Lambda function to be invoked by the client.
-
-PACKAGE is a standalone Python source file (aka the AWS Lambda handler). This
-is where the actual work happens.
-
-METHOD is the entrypoint to the handler. When combined with PACKAGE, the
-combination of PACKAGE.METHOD is the name of the handler configured in AWS
-Lambda.
-
-ROLE can also be defined using the AWS_ROLE_ARN environment variable.
+Commands:
+  all      Build-package-deploy-run in one step
+  build    Build image with dependencies
+  deploy   Deploy to AWS Lambda
+  package  Create AWS Lambda package
+  run      Run deployed AWS Lambda function
 ```
+
+#### Definitions for subcommand arguments
+
+<dl>
+  <dt>FUNCTION</dt>
+  <dd>Name of the AWS Lambda function to be invoked by the client.</dd>
+
+  <dt>PACKAGE</dt>
+  <dd>A standalone Python source file (aka the AWS Lambda handler). This is where the actual work happens.</dd>
+
+  <dt>METHOD</dt>
+  <dd>The entrypoint to the handler. When combined with `PACKAGE`, the combination of `PACKAGE.METHOD` is the name of the handler configured in AWS Lambda.</dd>
+
+  <dt>ROLE</dt>
+  <dd>The AWS resource name (ARN) for the role. It can also be defined using the `AWS_ROLE_ARN` environment variable.</dd>
+</dl>
 
 ### Examples
 
-  > AWS_ROLE_ARN=xxxxxxxxxx ./aws-lambda HelloWorld hello.py execute
+  > AWS_ROLE_ARN=xxxxxxxxxx ./aws-lambda all HelloWorld hello.py execute

@@ -11,6 +11,10 @@ import botocore
 import click
 import docker
 
+DEFAULT_TAG = 'probcomp/iventure-aws-lambda'
+DEFAULT_TIMEOUT = 90
+DEFAULT_MEMORY = 128
+
 
 def handler(package, method):
     """
@@ -67,16 +71,34 @@ def convert_archive_to_zip(function, package):
     tarf.close()
 
 
-def lambda_build(role, profile, function, package, tag):
+@click.group()
+@click.option('--role', envvar='AWS_ROLE_ARN', type=str, help="Role ARN")
+@click.option('--profile', default='default', help='AWS credential profile')
+@click.pass_context
+def cli(ctx, role, profile):
+    ctx.obj['ROLE'] = role
+    ctx.obj['PROFILE'] = profile
+
+
+@cli.command('build')
+@click.argument('function')
+@click.option('--tag', default=DEFAULT_TAG, help='Tag for generated Docker image')
+@click.pass_context
+def lambda_build(ctx, function, tag):
     """
-    Build dependencies image
+    Build image with dependencies
     """
     click.secho("building dependencies for AWS Lambda function ({})".format(function), fg='green')
     client = docker.from_env()
     client.images.build(path='.', tag=tag)
 
 
-def lambda_package(role, profile, function, package, method, tag):
+@cli.command('package')
+@click.argument('function')
+@click.argument('package')
+@click.option('--tag', default=DEFAULT_TAG, help='Tag for generated Docker image')
+@click.pass_context
+def lambda_package(ctx, function, package, tag):
     """
     Create AWS Lambda package
     """
@@ -86,15 +108,23 @@ def lambda_package(role, profile, function, package, method, tag):
     container.logs()
     get_archive(container, function)
     convert_archive_to_zip(function, package)
+    container.remove()
 
 
-def lambda_deploy(role, profile, function, package, method, timeout, memory):
+@cli.command('deploy')
+@click.argument('function')
+@click.argument('package')
+@click.argument('method')
+@click.option('--timeout', default=DEFAULT_TIMEOUT, help='Timeout for AWS Lambda function (seconds)')
+@click.option('--memory', default=DEFAULT_MEMORY, help='Maximum memory size for AWS Lambda function (MB)')
+@click.pass_context
+def lambda_deploy(ctx, function, package, method, timeout, memory):
     """
     Deploy to AWS Lambda
     """
     click.secho("deploying AWS Lambda function ({})".format(function), fg='green')
-    if profile:
-        session = boto3.Session(profile_name=profile)
+    if ctx.obj['PROFILE']:
+        session = boto3.Session(profile_name=ctx.obj['PROFILE'])
         client = session.client('lambda')
     else:
         client = boto3.client('lambda')
@@ -119,16 +149,23 @@ def lambda_deploy(role, profile, function, package, method, timeout, memory):
             Runtime='python2.7',
             Timeout=timeout,
             MemorySize=memory,
-            Role=role,
+            Role=ctx.obj['ROLE'],
             Handler=lambda_handler,
             Code={'ZipFile': content})
 
 
-def lambda_invoke(role, profile, function, payload=None):
+@cli.command('run')
+@click.argument('function')
+@click.argument('payload', nargs=-1, required=False, default=None)
+@click.pass_context
+def lambda_run(ctx, function, payload):
+    """
+    Run deployed AWS Lambda function
+    """
     click.secho("invoking AWS Lambda function ({})".format(function), fg='green')
 
-    if profile:
-        session = boto3.Session(profile_name=profile)
+    if ctx.obj['PROFILE']:
+        session = boto3.Session(profile_name=ctx.obj['PROFILE'])
         client = session.client('lambda')
     else:
         client = boto3.client('lambda')
@@ -137,21 +174,24 @@ def lambda_invoke(role, profile, function, payload=None):
     click.echo(response['StatusCode'])
 
 
-@click.command()
+@cli.command('all')
 @click.argument('function')
 @click.argument('package')
 @click.argument('method')
-@click.argument('role', envvar='AWS_ROLE_ARN', type=str)
-@click.option('--profile', default='default', help='AWS credential profile')
-@click.option('--tag', default='probcomp/iventure-aws-lambda', help='Tag for generated Docker image')
-@click.option('--timeout', default=90, help='Timeout for AWS Lambda function (seconds)')
-@click.option('--memory', default=128, help='Maximum memory size for AWS Lambda function (MB)')
-def main(role, profile, function, package, method):
-    lambda_build(role, profile, function, package, tag)
-    lambda_package(role, profile, function, package, method, tag)
-    lambda_deploy(role, profile, function, package, method, timeout, memory)
-    lambda_invoke(role, profile, function)
+@click.argument('payload', nargs=-1, required=False, default=None)
+@click.option('--tag', default=DEFAULT_TAG, help='Tag for generated Docker image')
+@click.option('--timeout', default=DEFAULT_TIMEOUT, help='Timeout for AWS Lambda function (seconds)')
+@click.option('--memory', default=DEFAULT_MEMORY, help='Maximum memory size for AWS Lambda function (MB)')
+@click.pass_context
+def lambda_all(ctx, function, package, method, payload, tag, timeout, memory):
+    """
+    Build-package-deploy-run in one step
+    """
+    ctx.invoke(lambda_build, function=function, tag=tag)
+    ctx.invoke(lambda_package, function=function, package=package, tag=tag)
+    ctx.invoke(lambda_deploy, function=function, package=package, method=method, timeout=timeout, memory=memory)
+    ctx.invoke(lambda_run, function=function, payload=payload)
 
 
 if __name__ == '__main__':
-    main()
+    cli(obj={})
