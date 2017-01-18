@@ -11,6 +11,7 @@ import botocore
 import click
 import docker
 
+DEFAULT_S3_BUCKET = 'probcomp-lambda'
 DEFAULT_TAG = 'probcomp/iventure-aws-lambda'
 DEFAULT_TIMEOUT = 90
 DEFAULT_MEMORY = 128
@@ -72,12 +73,15 @@ def convert_archive_to_zip(function, package):
 
 
 @click.group()
-@click.option('--role', envvar='AWS_ROLE_ARN', type=str, help="Role ARN")
+@click.option('--role', envvar='AWS_ROLE_ARN', type=str, help='Role ARN')
 @click.option('--profile', default='default', help='AWS credential profile')
+@click.option('--bucket', envvar='AWS_S3_BUCKET', default=DEFAULT_S3_BUCKET,
+              type=str, help='S3 bucket to upload deployment')
 @click.pass_context
-def cli(ctx, role, profile):
+def cli(ctx, role, profile, bucket):
     ctx.obj['ROLE'] = role
     ctx.obj['PROFILE'] = profile
+    ctx.obj['BUCKET'] = bucket
 
 
 @cli.command('build')
@@ -122,36 +126,47 @@ def lambda_deploy(ctx, function, package, method, timeout, memory):
     """
     Deploy to AWS Lambda
     """
-    click.secho("deploying AWS Lambda function ({})".format(function), fg='green')
     if ctx.obj['PROFILE']:
         session = boto3.Session(profile_name=ctx.obj['PROFILE'])
-        client = session.client('lambda')
+        s3_client = session.client('s3')
+        lambda_client = session.client('lambda')
     else:
-        client = boto3.client('lambda')
+        s3_client = boto3.client('s3')
+        lambda_client = boto3.client('lambda')
+
+    click.secho("uploading AWS Lambda function ({})".format(function), fg='green')
+
+    try:
+        s3_client.head_bucket(Bucket=ctx.obj['BUCKET'])
+    except botocore.exceptions.ClientError:
+        s3_client.create_bucket(Bucket=ctx.obj['BUCKET'])
+
+    archive = function + '.zip'
+    with open(archive, 'rb') as f:
+        s3_client.upload_fileobj(f, ctx.obj['BUCKET'], archive)
+
+    click.secho("deploying AWS Lambda function ({})".format(function), fg='green')
 
     lambda_handler = handler(package, method)
 
-    content = None
-    with open(function + '.zip', 'rb') as f:
-        content = f.read()
-
     try:
-        client.get_function(FunctionName=function)
-        client.update_function_configuration(
+        lambda_client.get_function(FunctionName=function)
+        lambda_client.update_function_configuration(
             FunctionName=function,
             Handler=lambda_handler)
-        client.update_function_code(
+        lambda_client.update_function_code(
             FunctionName=function,
-            ZipFile=content)
+            S3Bucket=ctx.obj['BUCKET'],
+            S3Key=archive)
     except botocore.exceptions.ClientError:
-        client.create_function(
+        lambda_client.create_function(
             FunctionName=function,
             Runtime='python2.7',
             Timeout=timeout,
             MemorySize=memory,
             Role=ctx.obj['ROLE'],
             Handler=lambda_handler,
-            Code={'ZipFile': content})
+            Code={'S3Bucket': ctx.obj['BUCKET'], 'S3Key': archive})
 
 
 @cli.command('run')

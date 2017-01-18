@@ -19,6 +19,7 @@ Usage: aws-lambda [OPTIONS] COMMAND [ARGS]...
 Options:
   --role TEXT     Role ARN
   --profile TEXT  AWS credential profile
+  --bucket TEXT   S3 bucket to upload deployment
   --help          Show this message and exit.
 
 Commands:
@@ -43,6 +44,9 @@ Commands:
 
   <dt>ROLE</dt>
   <dd>The AWS resource name (ARN) for the role. It can also be defined using the `AWS_ROLE_ARN` environment variable.</dd>
+
+  <dt>BUCKET</dt>
+  <dd>The name of the S3 bucket used for deployment. It can also be defined using the `AWS_S3_BUCKET` environment variable.</dd>
 </dl>
 
 ### Examples
