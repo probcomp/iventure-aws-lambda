@@ -57,8 +57,17 @@ def convert_archive_to_zip(function, package):
         # Ignore base installation files
         if re.match(r'easy_install|pkg_resources|pip|setuptools|wheel', name):
             continue
+        # Ignore specific third-party installation files
+        if re.match(r'cython|Cython|matplotlib|mpl_toolkits', name):
+            continue
         # Ignore compiled Python files
         if name.endswith('.pyc'):
+            continue
+        # Ignore tests
+        if re.match(r'.*/tests/.*', name):
+            continue
+        # Ignore data files
+        if name.endswith('.csv') or name.endswith('.dat'):
             continue
         # Ignore if not a file
         if not f:

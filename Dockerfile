@@ -33,3 +33,7 @@ RUN             . /activate && cd /root/bayeslite-apsw && python setup.py build 
 
 RUN             cd /root && git clone http://github.com/probcomp/bayeslite
 RUN             . /activate && cd /root/bayeslite && python setup.py build && pip install .
+
+# Remove debugging symbols from dynamic libraries
+
+RUN             cd /root && strip --strip-unneeded $(find . -name '*.so' | xargs) > /dev/null 2>&1
